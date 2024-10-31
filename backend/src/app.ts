@@ -5,11 +5,6 @@ import { CustomLogger } from "./middlewares/pino-logger.js";
 import { levels } from "pino";
 import type { PinoLogger } from "hono-pino";
 
-import { config } from "dotenv";
-import { expand } from "dotenv-expand";
-
-expand(config());
-
 interface AppBindings {
   Variables: {
     logger: PinoLogger;

@@ -12,3 +12,5 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 COMMIT;
+
+DROP TABLE __drizzle_migrations;

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { notFound, onError } from "stoker/middlewares";
 import { CustomLogger } from "./middlewares/pino-logger.js";
 import type { PinoLogger } from "hono-pino";
+import bcrypt from "bcrypt";
 
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
@@ -52,7 +53,9 @@ app.post("/login", zValidator("json", LoginSchema), async (c) => {
       return c.json({ error: "User not found" }, 404);
     }
 
-    if (password !== userFind.password) {
+    const isValidPassword = await bcrypt.compare(password, userFind.password);
+
+    if (!isValidPassword) {
       return c.json({ error: "Invalid password" }, 401);
     }
 
@@ -97,9 +100,7 @@ const SignSchema = z.object({
 });
 
 /*
-- installer bcrypt pour hasher mdp / faire la validation
-- sinon on peut créer l'utilisateur (requete pour insérer un utilisateur)
-- on return une validation comme quoi l'utilisateur est bien enregistré en bdd
+- jwt ? cookie ?
 */
 
 app.post("/signin", zValidator("json", SignSchema), async (c) => {
@@ -115,10 +116,16 @@ app.post("/signin", zValidator("json", SignSchema), async (c) => {
       return c.json({ message: "Something went wrong" }, 409);
     }
 
+    const saltRounds = 12;
+
+    const salt = await bcrypt.genSalt(saltRounds);
+
+    const hashedPassword = await bcrypt.hash(password, salt);
+
     const newUser = await db.insert(users).values({
       name,
       email,
-      password,
+      password: hashedPassword,
       lastLogin: new Date().toISOString(),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),

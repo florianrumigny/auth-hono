@@ -42,7 +42,8 @@ app.post("/login", zValidator("json", LoginSchema), async (c) => {
 
     // TODO : voir pour ajouter quelque chose si la validation n'est pas correct ? (possible d'ajouter result dans la doc)
 
-    const userFind = await db
+    // [userFind] to replace userFind[0].name etc
+    const [userFind] = await db
       .select()
       .from(users)
       .where(eq(users.email, email));
@@ -51,13 +52,13 @@ app.post("/login", zValidator("json", LoginSchema), async (c) => {
       return c.json({ error: "User not found" }, 404);
     }
 
-    if (password !== userFind[0].password) {
+    if (password !== userFind.password) {
       return c.json({ error: "Invalid password" }, 401);
     }
 
     const userInfo = {
-      name: userFind[0].name,
-      email: userFind[0].email,
+      name: userFind.name,
+      email: userFind.email,
     };
 
     console.log(userInfo);
@@ -97,13 +98,34 @@ const SignSchema = z.object({
 
 /*
 - installer bcrypt pour hasher mdp / faire la validation
-- si utilisateur existe déjà, on envoie une erreur
 - sinon on peut créer l'utilisateur (requete pour insérer un utilisateur)
 - on return une validation comme quoi l'utilisateur est bien enregistré en bdd
 */
 
-app.post("/signin", async (c) => {
+app.post("/signin", zValidator("json", SignSchema), async (c) => {
   try {
+    const { name, email, password } = c.req.valid("json");
+
+    const [existingUser] = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, email));
+
+    if (existingUser) {
+      return c.json({ message: "Something went wrong" }, 409);
+    }
+
+    const newUser = await db.insert(users).values({
+      name,
+      email,
+      password,
+      lastLogin: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      isActive: true,
+    });
+
+    return c.json({ message: "User created succesfully" }, 201);
   } catch (error) {
     console.log(error);
     c.json({ message: "Invalid server error" }, 500);

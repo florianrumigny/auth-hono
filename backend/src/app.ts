@@ -4,6 +4,7 @@ import { CustomLogger } from "./middlewares/pino-logger.js";
 import type { PinoLogger } from "hono-pino";
 
 import { z } from "zod";
+import { zValidator } from "@hono/zod-validator";
 import db from "./config/database.js";
 import { eq } from "drizzle-orm";
 import { users } from "./config/schema.js";
@@ -35,9 +36,11 @@ const LoginSchema = z.object({
     .max(80, { message: "Password can't exceed 80 characters" }),
 });
 
-app.post("/login", async (c) => {
+app.post("/login", zValidator("json", LoginSchema), async (c) => {
   try {
-    const { email, password } = LoginSchema.parse(await c.req.json());
+    const { email, password } = c.req.valid("json");
+
+    // TODO : voir pour ajouter quelque chose si la validation n'est pas correct ? (possible d'ajouter result dans la doc)
 
     const userFind = await db
       .select()
@@ -67,6 +70,45 @@ app.post("/login", async (c) => {
 });
 
 // TODO : POST route to sign in with jwt
+
+const SignSchema = z.object({
+  name: z
+    .string({ required_error: "name is required" })
+    .trim()
+    .min(3, { message: "Name must be 3 characters minimum" })
+    .max(50, { message: "Name can't exceed 50 characters" }),
+  email: z
+    .string({ required_error: "Email is required" })
+    .trim()
+    .email({ message: "Email format is invalid" })
+    .toLowerCase(),
+  password: z
+    .string({ required_error: "Password is required" })
+    .trim()
+    .min(6, { message: "Password must be 6 characters minimum" })
+    .max(80, { message: "Password can't exceed 80 characters" })
+    .regex(/[a-z]/, { message: "Password must contain 1 min" })
+    .regex(/[A-Z]/, { message: "Password must contain 1 maj" })
+    .regex(/[0-9]/, { message: "Password must contain 1 number" })
+    .regex(/[!@#$%^&*(),.?":{}|<>]/, {
+      message: "Le mot de passe doit contenir au moins un caractère spécial",
+    }),
+});
+
+/*
+- installer bcrypt pour hasher mdp / faire la validation
+- si utilisateur existe déjà, on envoie une erreur
+- sinon on peut créer l'utilisateur (requete pour insérer un utilisateur)
+- on return une validation comme quoi l'utilisateur est bien enregistré en bdd
+*/
+
+app.post("/signin", async (c) => {
+  try {
+  } catch (error) {
+    console.log(error);
+    c.json({ message: "Invalid server error" }, 500);
+  }
+});
 
 app.notFound(notFound);
 app.onError(onError);

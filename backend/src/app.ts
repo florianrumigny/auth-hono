@@ -9,6 +9,7 @@ import { zValidator } from "@hono/zod-validator";
 import db from "./config/database.js";
 import { eq } from "drizzle-orm";
 import { users } from "./config/schema.js";
+import { error } from "console";
 
 interface AppBindings {
   Variables: {
@@ -73,8 +74,6 @@ app.post("/login", zValidator("json", LoginSchema), async (c) => {
   }
 });
 
-// TODO : POST route to sign in with jwt
-
 const SignSchema = z.object({
   name: z
     .string({ required_error: "name is required" })
@@ -113,7 +112,10 @@ app.post("/signin", zValidator("json", SignSchema), async (c) => {
       .where(eq(users.email, email));
 
     if (existingUser) {
-      return c.json({ message: "Something went wrong" }, 409);
+      return c.json(
+        { message: "Something went wrong", error: "Email already exist" },
+        409
+      );
     }
 
     const saltRounds = 12;

@@ -9,6 +9,9 @@ import { zValidator } from "@hono/zod-validator";
 import db from "./config/database.js";
 import { eq } from "drizzle-orm";
 import { users } from "./config/schema.js";
+import { Resend } from "resend";
+import env from "./env.js";
+import { generateCode } from "./helpers/generateOTP.js";
 import { error } from "console";
 
 interface AppBindings {
@@ -18,6 +21,7 @@ interface AppBindings {
 }
 
 const app = new Hono<AppBindings>();
+const resend = new Resend(env.RESEND_API_KEY);
 
 app.use(CustomLogger());
 
@@ -36,38 +40,111 @@ const LoginSchema = z.object({
     .trim()
     .min(6, { message: "Password must be 6 characters minimum" })
     .max(80, { message: "Password can't exceed 80 characters" }),
+  otpCode: z
+    .string({ required_error: "OtpCode is required" })
+    .trim()
+    .min(6, { message: "Must be 6 characters" })
+    .max(6, { message: "Must be 6 characters" }),
 });
 
-app.post("/login", zValidator("json", LoginSchema), async (c) => {
+// To omit some types
+const RequestLoginSchema = LoginSchema.omit({
+  password: true,
+  otpCode: true,
+});
+
+// send the request to Login and send the otpcode to the user
+
+app.post(
+  "/request-login",
+  zValidator("json", RequestLoginSchema),
+  async (c) => {
+    try {
+      const { email } = c.req.valid("json");
+
+      // TODO : voir pour ajouter quelque chose si la validation n'est pas correct ? (possible d'ajouter result dans la doc)
+
+      // [userFind] to replace userFind[0].name etc
+      const [userFind] = await db
+        .select()
+        .from(users)
+        .where(eq(users.email, email));
+
+      if (!userFind) {
+        return c.json({ error: "User not found" }, 404);
+      }
+
+      const secretOtp = generateCode();
+
+      // to save the code in the DB (need to resent a code after 15 minutes)
+      const saveOtp = await db
+        .update(users)
+        .set({
+          otpCode: secretOtp,
+          otpExpiry: new Date(Date.now() + 15 * 60000),
+        })
+        .where(eq(users.email, email));
+
+      // To send the email to the client with the secreOtp
+      const sendEmail = await resend.emails.send({
+        from: "onboarding@resend.dev",
+        to: email,
+        subject: "Connexion code",
+        html: `You're connexion code is : ${secretOtp}`,
+      });
+
+      return c.json({ message: "Login succesful" }, 200);
+    } catch (error) {
+      console.log(error);
+      return c.json({ error: "Internal server error" }, 500);
+    }
+  }
+);
+
+const VerifyCodeSchema = LoginSchema.omit({
+  password: true,
+});
+
+// Request to verify the code and login
+
+app.post("/verify-code", zValidator("json", VerifyCodeSchema), async (c) => {
   try {
-    const { email, password } = c.req.valid("json");
+    const { email, otpCode } = c.req.valid("json");
 
-    // TODO : voir pour ajouter quelque chose si la validation n'est pas correct ? (possible d'ajouter result dans la doc)
+    const [user] = await db.select().from(users).where(eq(users.email, email));
 
-    // [userFind] to replace userFind[0].name etc
-    const [userFind] = await db
-      .select()
-      .from(users)
+    if (!user) {
+      return c.json({ error: "Something went wrong" }, 404);
+    }
+
+    if (user.otpCode !== otpCode) {
+      return c.json({ error: "Invalid OTP" }, 401);
+    }
+
+    if (new Date() > new Date(user.otpExpiry ?? 0)) {
+      return c.json({ error: "Expired OTP" }, 401);
+    }
+
+    const resetCode = await db
+      .update(users)
+      .set({
+        otpCode: null,
+        otpExpiry: null,
+        lastLogin: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
       .where(eq(users.email, email));
 
-    if (!userFind) {
-      return c.json({ error: "User not found" }, 404);
-    }
-
-    const isValidPassword = await bcrypt.compare(password, userFind.password);
-
-    if (!isValidPassword) {
-      return c.json({ error: "Invalid password" }, 401);
-    }
-
-    const userInfo = {
-      name: userFind.name,
-      email: userFind.email,
-    };
-
-    console.log(userInfo);
-
-    return c.json({ message: "Login succesful", user: userInfo }, 200);
+    return c.json(
+      {
+        message: "Login Succesful",
+        user: {
+          name: user.name,
+          email: user.email,
+        },
+      },
+      200
+    );
   } catch (error) {
     console.log(error);
     return c.json({ error: "Internal server error" }, 500);

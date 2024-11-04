@@ -28,6 +28,12 @@ export const users = sqliteTable("users", {
     .notNull()
     .default(sql`CURRENT_TIMESTAMP`),
 
+  // Generate Token and handle expire
+  otpCode: text("otp_code", { length: 6 }),
+  otpExpiry: int("otp_expiry", {
+    mode: "timestamp",
+  }),
+
   //forget password
   resetToken: text("reset_token"),
   resetTokenExpiry: text("reset_token_expiry"),

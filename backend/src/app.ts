@@ -12,11 +12,15 @@ import { users } from "./config/schema.js";
 import { Resend } from "resend";
 import env from "./env.js";
 import { generateCode } from "./helpers/generateOTP.js";
-import { error } from "console";
+import { decode, sign, verify, jwt } from "hono/jwt";
+import { setSignedCookie } from "hono/cookie";
+
+import type { JwtVariables } from "hono/jwt";
 
 interface AppBindings {
   Variables: {
     logger: PinoLogger;
+    jwt: JwtVariables;
   };
 }
 
@@ -24,6 +28,14 @@ const app = new Hono<AppBindings>();
 const resend = new Resend(env.RESEND_API_KEY);
 
 app.use(CustomLogger());
+
+app.use(
+  "/auth/*",
+  jwt({
+    secret: env.SECRET_KEY_TOKEN,
+    cookie: "auth",
+  })
+);
 
 app.get("/", (c) => {
   return c.text("Hello you!");
@@ -54,6 +66,13 @@ const RequestLoginSchema = LoginSchema.omit({
 });
 
 // send the request to Login and send the otpcode to the user
+
+// TODO : Integrate JWT and cookie system in the login
+// Putting Jwt in cookie protect from XSS attacks, with httponly flag (not accessible to client side JS)
+
+// Créer un middleware pour vérifier si le cookie est là pour la route get par exemple ?
+// voir si middleware existe avec Hono
+// Mettre en place un refresh token ?
 
 app.post(
   "/request-login",
@@ -135,6 +154,36 @@ app.post("/verify-code", zValidator("json", VerifyCodeSchema), async (c) => {
       })
       .where(eq(users.email, email));
 
+    // Créer le JWT - Hono helpers
+
+    const accessToken = await sign(
+      {
+        userId: user.id,
+        email: user.email,
+        exp: Math.floor(Date.now() / 1000) + 60 * 5,
+      },
+      env.SECRET_KEY_TOKEN
+    );
+
+    console.log(accessToken);
+
+    // On envoie un cookie qui servira à contenir les infos et les securiser
+    // Le path:"/" est important pour envoyer à toutes les requêtes
+
+    const cookie = await setSignedCookie(
+      c,
+      "auth",
+      accessToken,
+      env.SECRET_KEY_TOKEN,
+      {
+        path: "/",
+        httpOnly: true,
+        secure: env.NODE_ENV === "development", // "production", set as dev for local testing
+        sameSite: "Strict",
+        maxAge: 60 * 60 * 24 * 7, // 7 days
+      }
+    );
+
     return c.json(
       {
         message: "Login Succesful",
@@ -215,6 +264,32 @@ app.post("/signin", zValidator("json", SignSchema), async (c) => {
   } catch (error) {
     console.log(error);
     c.json({ message: "Invalid server error" }, 500);
+  }
+});
+
+app.get("/auth/profile/:id", async (c) => {
+  try {
+    const { id } = c.req.param();
+
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, Number(id)));
+
+    if (!user) {
+      return c.json({ message: "Something went wrong" }, 404);
+    }
+
+    return c.json(
+      {
+        message: "Get profile ok",
+        user: { name: user.name, email: user.email },
+      },
+      200
+    );
+  } catch (error) {
+    console.log(error);
+    return c.json({ error: "Internal error servor" }, 500);
   }
 });
 
